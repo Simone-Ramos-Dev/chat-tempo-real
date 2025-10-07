@@ -1,81 +1,91 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="pt-BR">
 <head>
+    <meta charset="UTF-8">
     <title>Go Chat</title>
     <style>
         body {
-            font-family: sans-serif;
+            font-family: Arial, sans-serif;
+            background: #f7f7f7;
+            text-align: center;
         }
-
         #chat-box {
             border: 1px solid #ccc;
             height: 300px;
-            overflow-y: scroll;
+            width: 400px;
+            margin: 20px auto;
             padding: 10px;
+            background: #fff;
+            overflow-y: scroll;
+            text-align: left;
         }
-
+        #controls {
+            width: 400px;
+            margin: auto;
+            display: flex;
+        }
         #message-input {
-            width: calc(100% - 100px);
-            padding: 5px;
+            flex: 1;
+            padding: 8px;
         }
-
         #send-button {
-            width: 90px;
-            padding: 5px;
+            width: 80px;
+            padding: 8px;
+            cursor: pointer;
         }
     </style>
 </head>
-
 <body>
-    <h1>Go Chat</h1>
+    <h1>💬 Go Chat</h1>
     <div id="chat-box"></div>
-    <input type="text" id="message-input" placeholder="Digite sua mensagem...">
-    <button id="send-button">Enviar</button>
+    <div id="controls">
+        <input type="text" id="message-input" placeholder="Digite sua mensagem...">
+        <button id="send-button">Enviar</button>
+    </div>
 
     <script>
-        // Cria a conexão WebSocket
         const socket = new WebSocket("ws://localhost:8080/ws");
 
         const chatBox = document.getElementById("chat-box");
         const messageInput = document.getElementById("message-input");
         const sendButton = document.getElementById("send-button");
 
-        // Evento de conexão
-        socket.onopen = function (event) {
-            console.log("Conectado ao servidor!");
-            chatBox.innerHTML += "<p><em>Você entrou no chat!</em></p>";
+        // Quando conectar
+        socket.onopen = () => {
+            addMessage("✅ Conectado ao servidor!");
         };
 
-        // Evento de recebimento de mensagem
-        socket.onmessage = function (event) {
-            const message = event.data;
-            chatBox.innerHTML += `<p>${message}</p>`;
-            chatBox.scrollTop = chatBox.scrollHeight;
+        // Quando receber mensagem
+        socket.onmessage = (event) => {
+            addMessage(event.data);
         };
 
-        // Evento de fechamento
-        socket.onclose = function (event) {
-            console.log("Desconectado do servidor.");
-            chatBox.innerHTML += "<p><em>Você saiu do chat.</em></p>";
+        // Quando desconectar
+        socket.onclose = () => {
+            addMessage("⚠️ Desconectado do servidor.");
         };
 
-        // Envia a mensagem quando o botão é clicado
-        sendButton.onclick = function () {
-            const message = messageInput.value;
-            if (message) {
-                socket.send(message);
+        // Enviar mensagem
+        sendButton.onclick = () => {
+            const msg = messageInput.value.trim();
+            if (msg) {
+                socket.send(msg);
                 messageInput.value = "";
             }
         };
 
-        // Envia a mensagem quando a tecla Enter é pressionada
-        messageInput.addEventListener("keydown", function (event) {
-            if (event.key === "Enter") {
-                sendButton.click();
-            }
+        // Enter envia a mensagem
+        messageInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") sendButton.click();
         });
+
+        // Função para adicionar mensagens ao chat
+        function addMessage(msg) {
+            const p = document.createElement("p");
+            p.textContent = msg;
+            chatBox.appendChild(p);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
     </script>
 </body>
-
 </html>

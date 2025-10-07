@@ -1,92 +1,105 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/gorilla/websocket"
 )
 
-// Define o upgrader para converter requisições HTTP em conexões WebSocket
+// Upgrader converte uma conexão HTTP em WebSocket
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Permite qualquer origem
+		return true // ⚠ Em produção, restrinja as origens
 	},
 }
 
-// Hub para gerenciar clientes (conexões)
-type Hub struct {
-	// Mapeia conexões de clientes
-	clients map[*websocket.Conn]bool
-	// Canal para registrar novas mensagens
-	broadcast chan []byte
-	// Canais para registrar e desregistrar clientes
-	register   chan *websocket.Conn
-	unregister chan *websocket.Conn
+// Client representa um usuário conectado
+type Client struct {
+	conn     *websocket.Conn
+	username string
 }
 
-// Inicializa e executa o hub
+// Hub gerencia os clientes conectados e as mensagens
+type Hub struct {
+	clients    map[*Client]bool
+	broadcast  chan string
+	register   chan *Client
+	unregister chan *Client
+	mu         sync.Mutex
+}
+
 func newHub() *Hub {
 	return &Hub{
-		clients:    make(map[*websocket.Conn]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *websocket.Conn),
-		unregister: make(chan *websocket.Conn),
+		clients:    make(map[*Client]bool),
+		broadcast:  make(chan string),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
 	}
 }
 
-// Run gerencia os canais e o estado do hub
 func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
-			// Adiciona um novo cliente
+			h.mu.Lock()
 			h.clients[client] = true
-			log.Println("Novo cliente conectado!")
+			h.mu.Unlock()
+			log.Printf("Novo cliente conectado: %s\n", client.username)
+			h.broadcast <- fmt.Sprintf("🔵 %s entrou no chat", client.username)
+
 		case client := <-h.unregister:
-			// Remove o cliente
+			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				client.Close()
-				log.Println("Cliente desconectado.")
+				client.conn.Close()
+				log.Printf("Cliente desconectado: %s\n", client.username)
+				h.broadcast <- fmt.Sprintf("🔴 %s saiu do chat", client.username)
 			}
+			h.mu.Unlock()
+
 		case message := <-h.broadcast:
-			// Envia a mensagem para todos os clientes
+			h.mu.Lock()
 			for client := range h.clients {
-				err := client.WriteMessage(websocket.TextMessage, message)
+				err := client.conn.WriteMessage(websocket.TextMessage, []byte(message))
 				if err != nil {
-					log.Printf("Erro ao enviar mensagem: %v", err)
-					client.Close()
+					log.Printf("Erro ao enviar mensagem para %s: %v", client.username, err)
+					client.conn.Close()
 					delete(h.clients, client)
 				}
 			}
+			h.mu.Unlock()
 		}
 	}
 }
 
-// HandleWebSocket lida com as conexões WebSocket
 func HandleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Upgrade de WebSocket falhou:", err)
+		log.Println("Erro no upgrade para WebSocket:", err)
 		return
 	}
 
-	// Registra o cliente no hub
-	hub.register <- conn
+	// Gera username automático
+	username := fmt.Sprintf("User-%d", time.Now().UnixNano()%10000)
+	client := &Client{conn: conn, username: username}
+	hub.register <- client
 
-	// Garante que o cliente seja removido ao sair
 	defer func() {
-		hub.unregister <- conn
+		hub.unregister <- client
 	}()
 
-	// Lê as mensagens do cliente e as envia para o canal de broadcast
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			log.Println("Erro de leitura:", err)
+			log.Printf("Erro ao ler mensagem de %s: %v", client.username, err)
 			break
 		}
-		hub.broadcast <- msg
+		hub.broadcast <- fmt.Sprintf("💬 %s: %s", client.username, string(msg))
 	}
 }
 
@@ -94,7 +107,13 @@ func main() {
 	hub := newHub()
 	go hub.Run()
 
-	// Roteamento
+	// Porta padrão
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	// Rotas
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
 	})
@@ -102,9 +121,9 @@ func main() {
 		HandleWebSocket(hub, w, r)
 	})
 
-	log.Println("Servidor de chat iniciado em :8080")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
+	addr := ":" + port
+	log.Printf("🚀 Servidor de chat iniciado em http://localhost:%s\n", port)
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		log.Fatal("Erro no servidor:", err)
 	}
 }
